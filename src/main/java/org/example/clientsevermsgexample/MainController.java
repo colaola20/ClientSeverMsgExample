@@ -7,23 +7,28 @@ import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
 import javafx.fxml.Initializable;
 import javafx.scene.Group;
+import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.stage.Stage;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
+import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URL;
 import java.net.UnknownHostException;
-import java.util.ResourceBundle;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static java.lang.Thread.sleep;
 
 public class MainController implements Initializable {
+    private PrintWriter out;
+    private BufferedReader in;
+    private Set<ClientHandler> clients = new HashSet<>();
+
+
     @FXML
     private ComboBox dropdownPort;
 
@@ -38,6 +43,9 @@ public class MainController implements Initializable {
                 "119",     // nntp (news)
                 "161"      // snmp);
         );
+
+        // connects to the server as the application starts
+        new Thread(this::runServer).start();
     }
 
     @FXML
@@ -62,7 +70,8 @@ public class MainController implements Initializable {
 
     Socket socket1;
 
-    Label lb122, lb12;
+    @FXML
+    private Label lb122, lb12;
     TextField msgText;
 
     @FXML
@@ -116,12 +125,15 @@ public class MainController implements Initializable {
         stage.show();
 
 
-        new Thread(this::runServer).start();
+//        new Thread(this::runServer).start();
 
     }
 
-    String message;
+//    String message;
 
+    /**
+     * This method runs the server and listens for incoming connections.
+     */
     private void runServer() {
         try {
 
@@ -130,33 +142,40 @@ public class MainController implements Initializable {
             while (true) { // Infinite loop
                 try {
                     Socket clientSocket = serverSocket.accept();
+                    ClientHandler clientHandler = new ClientHandler(clientSocket, clients);
+                    clients.add(clientHandler);
+                    new Thread(clientHandler).start();
                     updateServer("Client connected!");
 
-                    new Thread(() -> {
-                        try {
-                            sleep(3000);
-                        } catch (InterruptedException e) {
-                            throw new RuntimeException(e);
-                        }
-                    });
-                    DataInputStream dis = new DataInputStream(clientSocket.getInputStream());
-                    DataOutputStream dos = new DataOutputStream(clientSocket.getOutputStream());
+//                    new Thread(() -> {
+//                        try {
+//                            sleep(3000);
+//                        } catch (InterruptedException e) {
+//                            throw new RuntimeException(e);
+//                        }
+//                    });
 
-                    message = dis.readUTF();
-                    updateServer("Message from client: " + message);
 
-                    // Sending a response back to the client
-                    dos.writeUTF("Received: " + message);
+//                    DataInputStream dis = new DataInputStream(clientSocket.getInputStream());
+//                    DataOutputStream dos = new DataOutputStream(clientSocket.getOutputStream());
+//
+//                    message = dis.readUTF();
+//                    updateServer("Message from client: " + message);
+//
+//                    // Sending a response back to the client
+//                    dos.writeUTF("Received: " + message);
+//
+//                    dis.close();
+//                    dos.close();
 
-                    dis.close();
-                    dos.close();
+
+
 
                 } catch (IOException e) {
                     updateServer("Error: " + e.getMessage());
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
-                if (message.equalsIgnoreCase("exit")) break;
 
             }
         } catch (IOException e) {
@@ -180,6 +199,11 @@ public class MainController implements Initializable {
         connectButton.setOnAction(this::connectToServer);
         // new Thread(this::connectToServer).start();
 
+        Button sendButton = new Button("Send");
+        sendButton.setLayoutX(200);
+        sendButton.setLayoutY(300);
+        sendButton.setOnAction(this::sendMessage);
+
         Label lb11 = new Label("Client");
         lb11.setLayoutX(100);
         lb11.setLayoutY(100);
@@ -201,23 +225,41 @@ public class MainController implements Initializable {
 
     }
 
-
+    /**
+     * This method is used to connect to the server
+     * @param event
+     */
     private void connectToServer(ActionEvent event) {
 
 
         try {
             socket1 = new Socket("localhost", 6666);
 
-            DataOutputStream dos = new DataOutputStream(socket1.getOutputStream());
-            DataInputStream dis = new DataInputStream(socket1.getInputStream());
+            out = new PrintWriter(socket1.getOutputStream(), true);
+            in = new BufferedReader(new InputStreamReader(socket1.getInputStream()));
 
-            dos.writeUTF(msgText.getText());
-            String response = dis.readUTF();
-            updateTextClient("Server response: " + response + "\n");
+            new Thread(() -> {
+                String response;
+                try {
+                    while ((response = in.readLine()) != null) {
+                        updateTextClient(response);
+                    }
+                } catch(IOException e) {
+                    updateTextClient("Error: " + e.getMessage());
+                }
+            }).start();
+            out.println(msgText.getText());
 
-            dis.close();
-            dos.close();
-            socket1.close();
+//            DataOutputStream dos = new DataOutputStream(socket1.getOutputStream());
+//            DataInputStream dis = new DataInputStream(socket1.getInputStream());
+//
+//            dos.writeUTF(msgText.getText());
+//            String response = dis.readUTF();
+//            updateTextClient("Server response: " + response + "\n");
+//
+//            dis.close();
+//            dos.close();
+//            socket1.close();
         } catch (Exception e) {
             updateTextClient("Error: " + e.getMessage() + "\n");
         }
@@ -225,9 +267,63 @@ public class MainController implements Initializable {
 
     }
 
+    /**
+     * This method is used to send a message to the server
+     * @param event
+     */
+    @FXML
+    void sendMessage(ActionEvent event) {
+        if (out != null) {
+            out.println(msgText.getText());
+        }
+    }
+
     private void updateTextClient(String message) {
         // Run on the UI thread
         javafx.application.Platform.runLater(() -> lb122.setText(message + "\n"));
     }
+
+    /**
+     * This method is used to open a new window for user 1
+     * @param event
+     */
+    @FXML
+    void user1Msg(ActionEvent event) {
+        try {
+            Stage stage = new Stage();
+            FXMLLoader loader = new FXMLLoader(getClass().getResource("/org/example/clientsevermsgexample/client-view.fxml"));
+            Parent root = loader.load();
+            ClientView controller = loader.getController();
+            controller.initialize();
+            Scene scene = new Scene(root, 500, 400);
+            stage.setScene(scene);
+            stage.setTitle("User 1");
+            stage.show();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * This method is used to open a new window for user 2
+     * @param event
+     */
+    @FXML
+    void user2Msg(ActionEvent event) {
+        try {
+            Stage stage = new Stage();
+            FXMLLoader loader = new FXMLLoader(getClass().getResource("/org/example/clientsevermsgexample/client-view.fxml"));
+            Parent root = loader.load();
+            ClientView controller = loader.getController();
+            controller.initialize();
+            Scene scene = new Scene(root, 500, 400);
+            stage.setScene(scene);
+            stage.setTitle("User 2");
+            stage.show();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
 
 }
